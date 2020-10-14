@@ -27,9 +27,8 @@ using System.Collections.Generic;
 using Gdk;
 using Gtk;
 
-using DBus;
-using org.freedesktop;
-using org.freedesktop.DBus;
+using Tmds.DBus;
+using Notifications.DBus;
 
 namespace Notifications {
 	public enum Urgency : byte {
@@ -50,12 +49,12 @@ namespace Notifications {
 	}
 
 	public class CloseArgs : EventArgs {
-		private CloseReason reason;
-		public CloseReason Reason {
+		private uint reason;
+		public uint Reason {
 			get { return reason; }
 		}
 
-		public CloseArgs (CloseReason reason) {
+		public CloseArgs (uint reason) {
 			this.reason = reason;
 		}
 	}
@@ -100,16 +99,12 @@ namespace Notifications {
 		private IDictionary <string, object> hints  = new Dictionary<string, object> ();
 
 		public event EventHandler Closed;
-
-		static Notification () {
-			BusG.Init ();
-		}
 		
 		public Notification () {
-			nf = Global.DBusObject;
+			nf = Connection.Session.CreateProxy<INotifications>("org.freedesktop.Notifications", "/org/freedesktop/notifications");
 
-			nf.NotificationClosed += OnClosed;
-			nf.ActionInvoked += OnActionInvoked;
+			nf.WatchNotificationClosedAsync(OnClosed);
+			nf.WatchActionInvokedAsync(OnActionInvoked);
 
 			Assembly app_asm = Assembly.GetEntryAssembly();
 
@@ -320,7 +315,7 @@ namespace Notifications {
 			}
 		}
 		
-		public void Show () {
+		public async void Show () {
 			string[] actions;
 			lock (action_map) {
 				actions = new string[action_map.Keys.Count * 2];
@@ -330,22 +325,22 @@ namespace Notifications {
 					actions[i++] = pair.Value.Label;
 				}
 			}
-			id = nf.Notify (app_name, id, icon, summary, body, actions, hints, timeout);
+			id = await nf.NotifyAsync (app_name, id, icon, summary, body, actions, hints, timeout);
 			shown = true;
 		}
 
-		public void Close () {
-			nf.CloseNotification (id);
+		public async void CloseAsync () {
+			await nf.CloseNotificationAsync (id);
 			id = 0;
 			shown = false;
 		}
 
-		private void OnClosed (uint id, uint reason) {
-			if (this.id == id) {
+		private void OnClosed ((uint id, uint reason) tuple) {
+			if (this.id == tuple.id) {
 				this.id = 0;
 				shown = false;
 				if (Closed != null) {
-					Closed (this, new CloseArgs ((CloseReason) reason));
+					Closed (this, new CloseArgs (tuple.reason));
 				}
 			}
 		}
@@ -371,10 +366,10 @@ namespace Notifications {
 			Update ();
 		}
 
-		private void OnActionInvoked (uint id, string action) {
+		private void OnActionInvoked ((uint id, string action) tuple) {
 			lock (action_map) {
-				if (this.id == id && action_map.ContainsKey (action))
-					action_map[action].Handler (this, new ActionArgs (action));
+				if (this.id == tuple.id && action_map.ContainsKey (tuple.action))
+					action_map[tuple.action].Handler (this, new ActionArgs (tuple.action));
 			}
 		}
 
